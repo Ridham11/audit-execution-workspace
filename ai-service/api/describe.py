@@ -45,6 +45,8 @@ def track_response_time(start_time):
     if len(RESPONSE_TIMES) > 10:
         RESPONSE_TIMES.pop(0)
 
+    return duration
+
 
 # 🔹 Categorise
 @app.route('/categorise', methods=['POST'])
@@ -54,9 +56,7 @@ def categorise():
     data = request.get_json()
 
     if not data or "input" not in data:
-        return jsonify({
-            "error": "Missing 'input' in request body"
-        }), 400
+        return jsonify({"error": "Missing 'input'"}), 400
 
     user_input = data.get("input")
 
@@ -90,7 +90,7 @@ Text: {user_input}
         return jsonify({"error": str(e)}), 500
 
 
-# 🔥 Day 8 — RAG Query with Cache
+# 🔥 Day 9 — Query with META + relevance filter
 @app.route('/query', methods=['POST'])
 def query():
     global CACHE_HITS, CACHE_MISSES
@@ -106,44 +106,68 @@ def query():
         question = data.get("question")
         fresh = data.get("fresh", False)
 
-        # 🔹 Step 1: Create cache key
         cache_key = hashlib.sha256(question.encode()).hexdigest()
 
-        # 🔹 Step 2: Check cache
+        # 🔹 CACHE HIT
         if not fresh and cache_key in CACHE:
             cached = CACHE[cache_key]
 
-            # Check TTL
             if time.time() - cached["timestamp"] < CACHE_TTL:
                 CACHE_HITS += 1
-                track_response_time(start_time)
+                duration = track_response_time(start_time)
 
                 return jsonify({
                     "answer": cached["answer"],
                     "sources": cached["sources"],
-                    "cached": True
+                    "meta": {
+                        "confidence": 0.95,
+                        "model_used": groq.model,
+                        "tokens_used": 0,
+                        "response_time_ms": round(duration, 2),
+                        "cached": True
+                    }
                 })
 
-        # 🔹 Cache miss
+        # 🔹 CACHE MISS
         CACHE_MISSES += 1
 
-        # 🔹 Step 3: Retrieve from Chroma
         results = chroma.query_with_docs(question)
 
         documents = []
         if results and "documents" in results:
             documents = results["documents"]
 
+        # 🔥 NEW — relevance filter (safe)
+        question_words = set(question.lower().split())
+
+        relevant_docs = []
+        for doc in documents:
+            doc_words = set(doc.lower().split())
+            overlap = question_words.intersection(doc_words)
+
+            if len(overlap) > 0:
+                relevant_docs.append(doc)
+
+        documents = relevant_docs
+
+        # 🔹 NO DATA (after filtering)
         if not documents:
-            track_response_time(start_time)
+            duration = track_response_time(start_time)
+
             return jsonify({
                 "answer": "No relevant data found",
-                "sources": []
+                "sources": [],
+                "meta": {
+                    "confidence": 0.0,
+                    "model_used": groq.model,
+                    "tokens_used": 0,
+                    "response_time_ms": round(duration, 2),
+                    "cached": False
+                }
             })
 
         context = "\n".join(documents)
 
-        # 🔹 Step 4: LLM call
         prompt = f"""
 Answer the question using ONLY the context below.
 
@@ -160,29 +184,34 @@ Question:
 """
 
         response = groq.generate_response(prompt)
-
         answer = response.strip()
 
-        # 🔹 Step 5: Store in cache
+        # 🔹 STORE CACHE
         CACHE[cache_key] = {
             "answer": answer,
             "sources": documents,
             "timestamp": time.time()
         }
 
-        track_response_time(start_time)
+        duration = track_response_time(start_time)
 
         return jsonify({
             "answer": answer,
             "sources": documents,
-            "cached": False
+            "meta": {
+                "confidence": 0.9,
+                "model_used": groq.model,
+                "tokens_used": 0,
+                "response_time_ms": round(duration, 2),
+                "cached": False
+            }
         })
 
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
 
-# 🔥 HEALTH ENDPOINT
+# 🔥 HEALTH
 @app.route('/health', methods=['GET'])
 def health():
     try:
