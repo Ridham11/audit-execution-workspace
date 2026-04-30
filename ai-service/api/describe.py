@@ -3,6 +3,7 @@ from services.groq_client import GroqClient
 from services.chroma_service import ChromaService
 import json
 import time
+import hashlib
 
 app = Flask(__name__)
 
@@ -14,7 +15,10 @@ chroma = ChromaService()
 APP_START_TIME = time.time()
 RESPONSE_TIMES = []
 
-# Placeholder cache stats (Day 8 will replace with Redis)
+# 🔥 Day 8 — Cache
+CACHE = {}
+CACHE_TTL = 900  # 15 minutes
+
 CACHE_HITS = 0
 CACHE_MISSES = 0
 
@@ -86,9 +90,11 @@ Text: {user_input}
         return jsonify({"error": str(e)}), 500
 
 
-# 🔥 RAG Query
+# 🔥 Day 8 — RAG Query with Cache
 @app.route('/query', methods=['POST'])
 def query():
+    global CACHE_HITS, CACHE_MISSES
+
     start_time = time.time()
 
     try:
@@ -98,7 +104,30 @@ def query():
             return jsonify({"error": "Missing 'question'"}), 400
 
         question = data.get("question")
+        fresh = data.get("fresh", False)
 
+        # 🔹 Step 1: Create cache key
+        cache_key = hashlib.sha256(question.encode()).hexdigest()
+
+        # 🔹 Step 2: Check cache
+        if not fresh and cache_key in CACHE:
+            cached = CACHE[cache_key]
+
+            # Check TTL
+            if time.time() - cached["timestamp"] < CACHE_TTL:
+                CACHE_HITS += 1
+                track_response_time(start_time)
+
+                return jsonify({
+                    "answer": cached["answer"],
+                    "sources": cached["sources"],
+                    "cached": True
+                })
+
+        # 🔹 Cache miss
+        CACHE_MISSES += 1
+
+        # 🔹 Step 3: Retrieve from Chroma
         results = chroma.query_with_docs(question)
 
         documents = []
@@ -114,6 +143,7 @@ def query():
 
         context = "\n".join(documents)
 
+        # 🔹 Step 4: LLM call
         prompt = f"""
 Answer the question using ONLY the context below.
 
@@ -131,18 +161,28 @@ Question:
 
         response = groq.generate_response(prompt)
 
+        answer = response.strip()
+
+        # 🔹 Step 5: Store in cache
+        CACHE[cache_key] = {
+            "answer": answer,
+            "sources": documents,
+            "timestamp": time.time()
+        }
+
         track_response_time(start_time)
 
         return jsonify({
-            "answer": response.strip(),
-            "sources": documents
+            "answer": answer,
+            "sources": documents,
+            "cached": False
         })
 
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
 
-# 🔥 Day 7 — HEALTH ENDPOINT
+# 🔥 HEALTH ENDPOINT
 @app.route('/health', methods=['GET'])
 def health():
     try:
@@ -164,7 +204,8 @@ def health():
             "uptime_seconds": uptime,
             "cache": {
                 "hits": CACHE_HITS,
-                "misses": CACHE_MISSES
+                "misses": CACHE_MISSES,
+                "size": len(CACHE)
             }
         })
 
