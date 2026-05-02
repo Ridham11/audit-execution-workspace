@@ -17,7 +17,7 @@ RESPONSE_TIMES = []
 
 # 🔥 Day 8 — Cache
 CACHE = {}
-CACHE_TTL = 900  # 15 minutes
+CACHE_TTL = 900
 
 CACHE_HITS = 0
 CACHE_MISSES = 0
@@ -90,7 +90,7 @@ Text: {user_input}
         return jsonify({"error": str(e)}), 500
 
 
-# 🔥 Day 9 — Query with META + relevance filter
+# 🔥 FINAL QUERY
 @app.route('/query', methods=['POST'])
 def query():
     global CACHE_HITS, CACHE_MISSES
@@ -137,20 +137,18 @@ def query():
         if results and "documents" in results:
             documents = results["documents"]
 
-        # 🔥 NEW — relevance filter (safe)
+        # 🔥 Relevance filter
         question_words = set(question.lower().split())
 
         relevant_docs = []
         for doc in documents:
             doc_words = set(doc.lower().split())
-            overlap = question_words.intersection(doc_words)
-
-            if len(overlap) > 0:
+            if question_words.intersection(doc_words):
                 relevant_docs.append(doc)
 
         documents = relevant_docs
 
-        # 🔹 NO DATA (after filtering)
+        # 🔹 NO DATA
         if not documents:
             duration = track_response_time(start_time)
 
@@ -168,13 +166,17 @@ def query():
 
         context = "\n".join(documents)
 
+        # 🔥 STRICT PROMPT
         prompt = f"""
-Answer the question using ONLY the context below.
+You MUST answer strictly using ONLY the exact information from the context.
 
 Rules:
-- Answer in 1 short line
-- Do NOT explain
-- Do NOT add extra information
+- Return ONLY ONE short line
+- Select the MOST relevant sentence
+- DO NOT combine multiple lines
+- DO NOT add any new information
+- DO NOT infer anything
+- If not found, return: "No relevant data found"
 
 Context:
 {context}
@@ -184,12 +186,14 @@ Question:
 """
 
         response = groq.generate_response(prompt)
-        answer = response.strip()
 
-        # 🔹 STORE CACHE
+        # 🔥 Force single line
+        answer = response.strip().split("\n")[0]
+
+        # 🔹 STORE CACHE (ONLY BEST SOURCE)
         CACHE[cache_key] = {
             "answer": answer,
-            "sources": documents,
+            "sources": [documents[0]] if documents else [],
             "timestamp": time.time()
         }
 
@@ -197,7 +201,7 @@ Question:
 
         return jsonify({
             "answer": answer,
-            "sources": documents,
+            "sources": [documents[0]] if answer != "No relevant data found" and documents else [],
             "meta": {
                 "confidence": 0.9,
                 "model_used": groq.model,
