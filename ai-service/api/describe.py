@@ -26,15 +26,41 @@ CACHE_MISSES = 0
 # 🔹 Jobs
 JOBS = {}
 
-#  Fallback (Day 13)
+# 🔹 Fallback (Day 13)
 FALLBACK_RESPONSE = "We are facing temporary issues. Please try again later."
 
-# 🔹 Seed Data
+# 🔥 🔥 DAY 14 — EXPANDED DATASET (KEEP OLD + ADD NEW)
 chroma.add_text("Unauthorized transaction detected", "1")
 chroma.add_text("Payment failed due to network error", "2")
 chroma.add_text("Payment stuck but money deducted", "3")
 chroma.add_text("App crashes during login due to server timeout", "4")
 chroma.add_text("Account blocked due to suspicious activity", "5")
+
+chroma.add_text("User unable to login due to OTP failure", "6")
+chroma.add_text("Transaction declined due to insufficient balance", "7")
+chroma.add_text("Duplicate payment charged for same order", "8")
+chroma.add_text("Refund not processed after cancellation", "9")
+chroma.add_text("App crashes when opening payment page", "10")
+chroma.add_text("Delayed notification for successful transaction", "11")
+chroma.add_text("Incorrect account balance displayed", "12")
+chroma.add_text("Payment gateway timeout error", "13")
+chroma.add_text("User session expired during checkout", "14")
+chroma.add_text("Password reset link not working", "15")
+chroma.add_text("Fraud alert triggered incorrectly", "16")
+chroma.add_text("Account locked after multiple failed attempts", "17")
+chroma.add_text("Unable to update profile details", "18")
+chroma.add_text("Transaction history not loading", "19")
+chroma.add_text("Slow response during peak hours", "20")
+chroma.add_text("Card declined without valid reason", "21")
+chroma.add_text("Email notifications not received", "22")
+chroma.add_text("Security verification failed repeatedly", "23")
+chroma.add_text("App freezes on login screen", "24")
+chroma.add_text("Payment confirmation delayed", "25")
+chroma.add_text("User logged out automatically", "26")
+chroma.add_text("Error processing refund request", "27")
+chroma.add_text("Invalid OTP entered multiple times", "28")
+chroma.add_text("Server error during checkout", "29")
+chroma.add_text("User unable to add new payment method", "30")
 
 
 @app.route('/')
@@ -52,7 +78,7 @@ def track_response_time(start_time):
     return duration
 
 
-# 🔹 BACKGROUND JOB
+# 🔹 BACKGROUND JOB (UNCHANGED)
 def process_report(job_id, text):
     try:
         prompt = f"""
@@ -87,7 +113,7 @@ Text:
         JOBS[job_id]["error"] = str(e)
 
 
-# 🔹 QUERY (WITH FALLBACK)
+# 🔹 QUERY (WITH CACHE + FALLBACK + DAY 14 PROMPT)
 @app.route('/query', methods=['POST'])
 def query():
     global CACHE_HITS, CACHE_MISSES
@@ -154,12 +180,13 @@ def query():
 
     context = "\n".join(documents)
 
+    # 🔥 DAY 14 PROMPT (STRICT)
     prompt = f"""
-You MUST answer strictly using ONLY the context.
-
-Rules:
-- ONE short line only
-- No extra info
+STRICT RULES:
+- Use ONLY given context
+- Answer in ONE short line
+- Do NOT explain
+- Do NOT assume anything
 
 Context:
 {context}
@@ -168,7 +195,7 @@ Question:
 {question}
 """
 
-    #  FALLBACK LOGIC
+    # 🔹 FALLBACK LOGIC
     is_fallback = False
 
     try:
@@ -202,7 +229,7 @@ Question:
     })
 
 
-# 🔹 GENERATE REPORT
+# 🔹 GENERATE REPORT (UNCHANGED)
 @app.route('/generate-report', methods=['POST'])
 def generate_report():
     data = request.get_json()
@@ -226,7 +253,7 @@ def generate_report():
     })
 
 
-# 🔹 JOB STATUS
+# 🔹 JOB STATUS (UNCHANGED)
 @app.route('/job-status/<job_id>', methods=['GET'])
 def job_status(job_id):
     if job_id not in JOBS:
@@ -234,7 +261,7 @@ def job_status(job_id):
     return jsonify(JOBS[job_id])
 
 
-# 🔹 HEALTH
+# 🔹 HEALTH (UNCHANGED)
 @app.route('/health')
 def health():
     return jsonify({
