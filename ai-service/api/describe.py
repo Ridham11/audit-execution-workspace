@@ -1,7 +1,6 @@
 from flask import Flask, request, jsonify
 from services.groq_client import GroqClient
 from services.chroma_service import ChromaService
-import json
 import time
 import hashlib
 import uuid
@@ -14,18 +13,21 @@ app = Flask(__name__)
 groq = GroqClient()
 chroma = ChromaService()
 
-# 🔹 Metrics (Day 7)
+# 🔹 Metrics
 APP_START_TIME = time.time()
 RESPONSE_TIMES = []
 
-# 🔹 Cache (Day 8)
+# 🔹 Cache
 CACHE = {}
 CACHE_TTL = 900
 CACHE_HITS = 0
 CACHE_MISSES = 0
 
-# 🔹 Jobs (Day 11)
+# 🔹 Jobs
 JOBS = {}
+
+#  Fallback (Day 13)
+FALLBACK_RESPONSE = "We are facing temporary issues. Please try again later."
 
 # 🔹 Seed Data
 chroma.add_text("Unauthorized transaction detected", "1")
@@ -50,7 +52,7 @@ def track_response_time(start_time):
     return duration
 
 
-# 🔥 BACKGROUND JOB (WITH WEBHOOK)
+# 🔹 BACKGROUND JOB
 def process_report(job_id, text):
     try:
         prompt = f"""
@@ -62,16 +64,13 @@ Analyze the following text and return:
 Text:
 {text}
 """
-
         response = groq.generate_response(prompt)
         answer = response.strip()
 
         JOBS[job_id]["status"] = "completed"
         JOBS[job_id]["result"] = answer
 
-        print(f"[JOB COMPLETED] {job_id}")
-
-        # 🔥 Webhook
+        # 🔹 Webhook
         webhook_url = JOBS[job_id].get("webhook_url")
         if webhook_url:
             try:
@@ -80,7 +79,6 @@ Text:
                     "status": "completed",
                     "result": answer
                 })
-                print(f"[WEBHOOK SENT]")
             except Exception as e:
                 print(f"[WEBHOOK FAILED] {e}")
 
@@ -89,7 +87,7 @@ Text:
         JOBS[job_id]["error"] = str(e)
 
 
-# 🔹 QUERY (FULL DAY 10 LOGIC KEPT)
+# 🔹 QUERY (WITH FALLBACK)
 @app.route('/query', methods=['POST'])
 def query():
     global CACHE_HITS, CACHE_MISSES
@@ -121,7 +119,8 @@ def query():
                     "model_used": groq.model,
                     "tokens_used": 0,
                     "response_time_ms": round(duration, 2),
-                    "cached": True
+                    "cached": True,
+                    "is_fallback": False
                 }
             })
 
@@ -130,14 +129,12 @@ def query():
     results = chroma.query_with_docs(question)
     documents = results.get("documents", []) if results else []
 
-    # 🔥 RELEVANCE FILTER (IMPORTANT)
+    # 🔹 RELEVANCE FILTER
     question_words = set(question.lower().split())
-    filtered = [
+    documents = [
         doc for doc in documents
         if question_words.intersection(set(doc.lower().split()))
     ]
-
-    documents = filtered
 
     if not documents:
         duration = track_response_time(start_time)
@@ -150,7 +147,8 @@ def query():
                 "model_used": groq.model,
                 "tokens_used": 0,
                 "response_time_ms": round(duration, 2),
-                "cached": False
+                "cached": False,
+                "is_fallback": False
             }
         })
 
@@ -162,7 +160,6 @@ You MUST answer strictly using ONLY the context.
 Rules:
 - ONE short line only
 - No extra info
-- No combining lines
 
 Context:
 {context}
@@ -171,8 +168,17 @@ Question:
 {question}
 """
 
-    response = groq.generate_response(prompt)
-    answer = response.strip().split("\n")[0]
+    #  FALLBACK LOGIC
+    is_fallback = False
+
+    try:
+        response = groq.generate_response(prompt)
+        answer = response.strip().split("\n")[0]
+
+    except Exception as e:
+        print("Groq error:", str(e))
+        answer = FALLBACK_RESPONSE
+        is_fallback = True
 
     CACHE[cache_key] = {
         "answer": answer,
@@ -190,12 +196,13 @@ Question:
             "model_used": groq.model,
             "tokens_used": 0,
             "response_time_ms": round(duration, 2),
-            "cached": False
+            "cached": False,
+            "is_fallback": is_fallback
         }
     })
 
 
-# 🔥 GENERATE REPORT (ASYNC + WEBHOOK)
+# 🔹 GENERATE REPORT
 @app.route('/generate-report', methods=['POST'])
 def generate_report():
     data = request.get_json()
@@ -219,7 +226,7 @@ def generate_report():
     })
 
 
-# 🔥 JOB STATUS
+# 🔹 JOB STATUS
 @app.route('/job-status/<job_id>', methods=['GET'])
 def job_status(job_id):
     if job_id not in JOBS:
@@ -227,7 +234,7 @@ def job_status(job_id):
     return jsonify(JOBS[job_id])
 
 
-# 🔥 HEALTH
+# 🔹 HEALTH
 @app.route('/health')
 def health():
     return jsonify({
